@@ -1,11 +1,16 @@
 # Utah Lead Radar
 
-A small Python pipeline that finds every water softener / water treatment
-company in Utah County, measures how actively each one markets itself, has
-Claude Haiku score how likely it is to **buy homeowner leads**, and drafts
-short, personalized intro emails for the top 10 — referencing
-[utahwaterguide.com](https://utahwaterguide.com), an independent
-water-hardness resource.
+*Built by Shennan in one evening with Claude Code. stoelupe@gmail.com*
+
+A small Python pipeline that finds the water softener / water treatment
+companies in Utah County — 43 of them across 14 cities — measures how
+actively each one markets itself, has Claude Haiku score how likely it is
+to **buy homeowner leads**, and drafts short, personalized intro emails for
+the top 10, referencing [utahwaterguide.com](https://utahwaterguide.com), an
+independent water-hardness resource.
+
+**Why I built it:** to find lead buyers for my own site,
+[utahwaterguide.com](https://utahwaterguide.com).
 
 It runs almost entirely on free tiers, and every paid or rate-limited call
 is cached, so reruns cost nothing.
@@ -29,6 +34,22 @@ rows).
 > under 25 / 25-99 / 100-499 / 500+; ratings: 5.0 / 4.5+ / 4.0+ / under 4.0),
 > including inside the reasons. Scores and signals are real. Full results
 > stay in `data/`, which is gitignored.
+
+## What it found
+
+- **Nobody is bidding on these searches.** 0 of 14 geo-located "water
+  softener {city} utah" searches showed a paid ad. Local Services Ads
+  appeared in just 1 of 14, and only for two big plumbing/HVAC firms.
+- **Few companies run ad pixels.** 8 of 43 companies have a Google Ads tag or
+  a Meta Pixel on their site, and 2 of those 8 were only detectable inside
+  their Google Tag Manager container. A plain HTML scan would have missed them.
+- **Places' default search misses service-area businesses.** 18 of the 43
+  companies are service-area businesses (no storefront address) that
+  default Places Text Search doesn't return. 6 of them hold Google map-pack
+  spots, including two that appear in the map pack for 4 cities each.
+- **The best leads already pay for ads.** The top 4 (scores 8–9) all combine
+  a Google Ads tag with a Meta Pixel. No company without either one scored
+  above 7.
 
 ## Pipeline
 
@@ -143,6 +164,24 @@ Everything tunable lives in `config.py`: search cities vs. allowed cities
 (`FLAGGED_COMPANIES`) and exclusions (`EXCLUDED_COMPANIES`), which flags skip
 emails, the Claude model, and the sender details.
 
+## Adapting it
+
+The pipeline isn't specific to water softeners. To target any local service
+niche (roofers, HVAC, solar, pest control...):
+
+1. In `config.py`, change `SEARCH_CITIES` and `ALLOWED_CITIES` to your
+   region, and `SEARCH_TERMS` to your niche (e.g. `"roofing company"`).
+   Also update `RESOURCE_DESCRIPTION` and the sender details.
+2. In `src/enrich.py`, change the SerpApi query (`"water softener {city} utah"`
+   in `_serp_key`) to match.
+3. In `src/score.py`, rewrite `SYSTEM_PROMPT` to describe what you're selling
+   and which signals matter. Keep the calibration bands.
+4. In `src/discover.py`, adjust the name filters (`WATER_TREATMENT_NAME`,
+   `PLUMBER_NAME`, etc.) that decide what counts as a real business in the
+   niche.
+5. Run the stages with `--limit` first to check the results before spending
+   the full quota.
+
 ## Notes
 
 - Email drafts contain `[OFFER]` and `[MAILING ADDRESS]` placeholders to fill
@@ -150,3 +189,8 @@ emails, the Claude model, and the sender details.
   yourself; this tool never sends anything.
 - Website scans identify themselves with a descriptive user agent, pause
   between requests, and hit each site at most once (cached).
+
+## About the author
+
+Built by Shennan, founder of [Utah Water Guide](https://utahwaterguide.com).
+Questions or ideas: stoelupe@gmail.com
