@@ -1,0 +1,5 @@
+requests==2.32.3
+python-dotenv==1.0.1
+anthropic==1.8.0
+pandas==2.2.3
+rich==15.0.0

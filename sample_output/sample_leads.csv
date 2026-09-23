@@ -1,0 +1,6 @@
+rank,score,score_reason,name,location,rating,review_count,map_pack_cities,organic_top10_cities,google_ads_tag,meta_pixel
+1,9,Google Ads tag and Meta Pixel present; 100-499 reviews (strong volume); working website. High purchase intent signals.,Company A,service area (Lehi),4.5+,100-499,,0,yes,yes
+2,9,Google Ads tag and Meta Pixel via GTM indicate active paid customer acquisition; 25-99 reviews show meaningful install volume and capacity.,Company B,Saratoga Springs,5.0,25-99,,0,yes (via GTM),yes (via GTM)
+3,8,"Google Ads tag and Meta Pixel present, 25-99 reviews, map pack presence, working website.",Company C,Alpine,4.5+,25-99,Alpine,1,yes,yes
+4,8,"Google Ads tag and Meta Pixel present, financing and free-test offers, working website. Limited reviews and map presence offset strong acquisition signals.",Company D,Salem,,,Salem,0,yes,yes
+5,7,"500+ reviews, strong map pack (4 cities), top-10 organic in 12 cities, best position #1. No ad tags, but established local presence.",Company E,Lindon,4.5+,500+,"American Fork, Lindon, Orem, Pleasant Grove",12,no,no
