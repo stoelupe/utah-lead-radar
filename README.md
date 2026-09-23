@@ -1,6 +1,6 @@
 # Utah Lead Radar
 
-*Built by Shennan in one evening with Claude Code. stoelupe@gmail.com*
+*Built by Shennan in one evening with Claude Code. [LinkedIn](https://www.linkedin.com/in/stoelupe/)*
 
 A small Python pipeline that finds the water softener / water treatment
 companies in Utah County — 43 of them across 14 cities — measures how
@@ -193,4 +193,4 @@ niche (roofers, HVAC, solar, pest control...):
 ## About the author
 
 Built by Shennan, founder of [Utah Water Guide](https://utahwaterguide.com).
-Questions or ideas: stoelupe@gmail.com
+Questions or ideas: [LinkedIn](https://www.linkedin.com/in/stoelupe/)
