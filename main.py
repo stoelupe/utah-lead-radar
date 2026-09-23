@@ -12,6 +12,7 @@ Usage:
     python main.py contacts             # find public contact emails (cached, free)
     python main.py emails --limit 2     # test-draft 2 emails (not saved; never sent)
     python main.py emails               # draft top 10, save data/email_drafts.json
+    python main.py emails --rebuild     # re-apply subject/offer/signature, no API calls
     python main.py export               # write data/leads.csv
     python main.py docs                 # README SVGs + sample CSV, from cache only
 """
@@ -97,8 +98,8 @@ def run_score(limit, names):
         print(f"\nSaved {len(companies)} scored companies to {result['out_path']}")
 
 
-def run_emails(limit):
-    result = emails.draft_emails(limit=limit)
+def run_emails(limit, rebuild):
+    result = emails.rebuild_drafts() if rebuild else emails.draft_emails(limit=limit)
     for d in result["drafts"]:
         issues = f"  ** {'; '.join(d['problems'])} **" if d["problems"] else ""
         print(f"\n=== {d['name']} (score {d['score']}, {d['word_count']} words){issues}")
@@ -106,6 +107,11 @@ def run_emails(limit):
         print(f"Fact: {d['fact_used']}")
         print(f"Subject: {d['subject']}\n")
         print(d["body"])
+    conflicts = [d for d in result["drafts"] if d["city_conflict"]]
+    if conflicts:
+        print("\nCity conflicts (one exclusive spot per city):")
+        for d in conflicts:
+            print(f"  {d['name']}: {d['city_conflict']}")
     # A partial (test) run doesn't overwrite a full drafts file.
     if limit is None:
         result["out_path"].write_text(json.dumps(result["drafts"], indent=2))
@@ -156,6 +162,11 @@ def main():
     parser.add_argument(
         "--refresh", action="store_true", help="re-run queries even if already cached"
     )
+    parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="emails: re-apply subject/offer/signature to saved drafts, no API calls",
+    )
     args = parser.parse_args()
 
     if args.stage == "discover":
@@ -167,7 +178,7 @@ def main():
     elif args.stage == "contacts":
         run_contacts()
     elif args.stage == "emails":
-        run_emails(limit=args.limit)
+        run_emails(limit=args.limit, rebuild=args.rebuild)
     elif args.stage == "export":
         run_export()
     elif args.stage == "docs":

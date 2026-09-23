@@ -15,7 +15,7 @@ COLUMNS = [
     "rank", "score", "score_reason", "name", "location", "contact_email", "phone", "website",
     "rating", "review_count", "map_pack_cities", "organic_top10_cities",
     "google_ads_tag", "meta_pixel", "financing_offer", "free_water_test_offer",
-    "flag", "email_subject", "email_body",
+    "flag", "email_subject", "email_body", "email_city_conflict",
 ]
 
 
@@ -61,6 +61,7 @@ def export_csv() -> dict:
             "flag": c.get("flag") or "",
             "email_subject": draft.get("subject", ""),
             "email_body": draft.get("body", ""),
+            "email_city_conflict": draft.get("city_conflict") or "",
         })
 
     # utf-8-sig so Excel detects UTF-8 (stars, dashes) correctly.

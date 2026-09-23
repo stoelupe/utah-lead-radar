@@ -5,10 +5,13 @@ DRAFTS ONLY -- this module never sends anything; it has no mail code at all.
 Picks the top TOP_N_FOR_EMAILS scored companies (skipping competitor flags)
 and gives Claude Haiku one verified fact about each -- chosen in code, with
 only the top AD_FACT_TOP_N allowed to lead with "already runs ads" -- to
-work into a short, plain email. The greeting ("Hi Spencer," when the contact
-address is a first name), [OFFER] placeholder line, closing, signature and
-footer are added in code so they're always exact. Code checks each draft for
-the site URL, the word limit, flattery and usage/traffic claims (one retry).
+work into two short sentences. Everything else -- the subject line
+("Exclusive {city} spot..."), greeting ("Hi Spencer," when the contact
+address is a first name), offer, closing, signature and footer -- is added
+in code so it's always exact, and can be changed later with `--rebuild`
+without re-calling Claude. Code checks each draft for the site URL, the word
+limit, flattery and usage/traffic claims (one retry), and flags drafts that
+share a city, since the offer is one exclusive spot per city.
 Contact emails come from contacts.py (free homepage + contact-page scan).
 """
 
@@ -26,8 +29,15 @@ IN_PATH = config.DATA_DIR / "scored_companies.json"
 OUT_PATH = config.DATA_DIR / "email_drafts.json"
 
 MAX_WORDS = 120  # greeting through signature; the footer isn't counted
-OFFER = "[OFFER]"  # placeholder line for the concrete offer, filled in by hand
+MAX_BODY_WORDS = 55  # the model's two sentences, leaving room for the fixed offer
+OFFER = (
+    "I'm offering one water treatment company per city an exclusive spot. "
+    "The first 3 homeowner leads from your area are free, with no contract "
+    "after that. You'd only pay for leads you actually get."
+)
 CLOSING = "Open to a quick chat?"
+SIGNATURE = config.EMAIL_SIGNATURE
+SUBJECT = "Exclusive {city} spot on Utah Water Guide"
 MIN_REVIEWS_FOR_FACT = 10  # "2 Google reviews" isn't a detail worth leading with
 # Local parts that are a role, not a person, so they don't become "Hi Info,".
 ROLE_MAILBOXES = {
@@ -84,13 +94,10 @@ the company and the description above.
 - Don't describe an offer, a partnership, or connecting/exploring/working \
 together, and don't ask to chat -- an offer line, closing question and \
 signature are added separately.
-- The body must be under {MAX_WORDS - 15} words.
-
-Also write a short, plain subject line (under 8 words)."""
+- The two sentences together must be under {MAX_BODY_WORDS} words."""
 
 
 class EmailDraft(BaseModel):
-    subject: str
     body: str
 
 
@@ -167,8 +174,42 @@ def _problems(full: str) -> list[str]:
         problems.append('it must include the exact text "utahwaterguide.com"')
     words = _word_count(full)
     if words >= MAX_WORDS:
-        problems.append(f"it was {words} words with the closing added; make the body shorter")
+        problems.append(f"the full email was {words} words; make your two sentences shorter")
     return problems
+
+
+def _city(company: dict) -> str:
+    """The city the exclusive offer is for: the address city, or for a
+    service-area business the city whose search surfaced it."""
+    return company["search_city"] if company.get("service_area") else company.get("city")
+
+
+def _assemble(company: dict, email: Optional[str], middle: str) -> dict:
+    """Wrap the model-written sentences in the code-built parts."""
+    full = (
+        f"{_greeting(company, email)}\n\n{middle.strip()}\n\n{OFFER}\n\n"
+        f"{CLOSING}\n\n{SIGNATURE}"
+    )
+    return {
+        "subject": SUBJECT.format(city=_city(company)),
+        "city": _city(company),
+        "middle": middle.strip(),
+        "body": f"{full}\n\n{FOOTER}",
+        "word_count": _word_count(full),
+        "_full": full,
+    }
+
+
+def _mark_city_conflicts(drafts: list[dict]) -> None:
+    """Exclusivity means one company per city, so flag drafts sharing one."""
+    by_city: dict[str, list[str]] = {}
+    for d in drafts:
+        by_city.setdefault(d["city"], []).append(d["name"])
+    for d in drafts:
+        others = [n for n in by_city[d["city"]] if n != d["name"]]
+        d["city_conflict"] = (
+            f"same city ({d['city']}) as {', '.join(others)}" if others else None
+        )
 
 
 def _draft_one(
@@ -190,25 +231,15 @@ def _draft_one(
             messages=messages,
             output_format=EmailDraft,
         )
-        draft = response.parsed_output
-        full = (
-            f"{_greeting(company, email)}\n\n{draft.body.strip()}\n\n{OFFER}\n\n"
-            f"{CLOSING}\n\n{config.EMAIL_SIGNATURE}"
-        )
-        problems = _problems(full)
+        assembled = _assemble(company, email, response.parsed_output.body)
+        problems = _problems(assembled.pop("_full"))
         if not problems:
             break
         messages = [{
             "role": "user",
             "content": prompt + "\n\nRewrite your last draft: " + "; ".join(problems) + ".",
         }]
-    return {
-        "subject": draft.subject.strip(),
-        "body": f"{full}\n\n{FOOTER}",
-        "word_count": _word_count(full),
-        "fact_used": fact,
-        "problems": problems,
-    }
+    return {**assembled, "fact_used": fact, "problems": problems}
 
 
 def draft_emails(limit: Optional[int] = None) -> dict:
@@ -250,4 +281,21 @@ def draft_emails(limit: Optional[int] = None) -> dict:
             "website": company.get("website"),
             **draft,
         })
+    _mark_city_conflicts(drafts)
+    return {"drafts": drafts, "out_path": OUT_PATH}
+
+
+def rebuild_drafts() -> dict:
+    """Re-apply the code-built parts (subject, greeting, offer, closing,
+    signature, footer) to the saved drafts, keeping each draft's
+    model-written sentences. No API calls."""
+    drafts = json.loads(OUT_PATH.read_text())
+    companies = {c["place_id"]: c for c in json.loads(IN_PATH.read_text())}
+    for d in drafts:
+        # Drafts saved before "middle" was stored: it's the 2nd paragraph.
+        middle = d.get("middle") or d["body"].split("\n\n")[1]
+        assembled = _assemble(companies[d["place_id"]], d["contact_email"], middle)
+        d["problems"] = _problems(assembled.pop("_full"))
+        d.update(assembled)
+    _mark_city_conflicts(drafts)
     return {"drafts": drafts, "out_path": OUT_PATH}
