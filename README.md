@@ -63,7 +63,7 @@ discover -> enrich -> score -> contacts -> emails -> export
 | 2. enrich | `src/enrich.py` | One geo-located Google search per city via SerpApi: records who appears in paid ads, Local Services Ads, the map pack and organic top 10. Scans each homepage for a Google Ads tag, GA/GTM, Meta Pixel, financing and free-water-test offers — including tags hidden inside Google Tag Manager containers. | SerpApi (cached), company homepages (cached) |
 | 3. score | `src/score.py` | Claude Haiku scores each company 1–10 on lead-buying likelihood with a one-line reason, using structured output. Competitors score 0 with no API call. | Anthropic API (cached per company) |
 | 4. contacts | `src/contacts.py` | Finds public contact emails from the homepage + contact page (mailto links, plain text, Cloudflare-obfuscated addresses). | Company websites (cached) |
-| 5. emails | `src/emails.py` | Drafts short emails for the top 10 non-competitors. **Drafts only — there is no sending code.** | Anthropic API |
+| 5. emails | `src/emails.py` | Drafts partnership emails for the top 10 non-competitors, assigns send waves and flags companies in the same city. **Drafts only — there is no sending code.** | Anthropic API (one sentence per draft) |
 | 6. export | `src/export.py` | Writes a ranked `data/leads.csv` for Excel / Google Sheets. | none |
 | docs | `src/render_docs.py` | Renders the SVGs above and the anonymized sample CSV with [`rich`](https://github.com/Textualize/rich), from cached data only. | none |
 
@@ -104,11 +104,12 @@ score it 0 and skip it for emails; informational flags like `site down`
 (set automatically when a domain no longer resolves) don't block outreach.
 
 **Keep the model honest.** The scoring prompt has explicit calibration
-bands (no ad tag or pixel → max 7). For emails, code — not the model —
-picks the single personalization fact, builds the greeting, and appends the
-offer line, closing, signature and opt-out footer. Code then checks each
-draft for the site URL, the word limit, flattery and any claim about the
-site's traffic or users, and retries once if needed.
+bands (no ad tag or pixel → max 7). For emails, the copy is fixed text in
+code; the model writes only one personalization sentence, from a single
+fact that code picks. Code checks that sentence for flattery, length and any
+claim about the site's traffic or users, and retries once if needed.
+Ad-signal facts skip the model and always read "I noticed you're already
+investing in online marketing."
 
 ## Setup
 
@@ -138,6 +139,7 @@ python main.py score                # score all -> data/scored_companies.json
 python main.py contacts             # public contact emails (free)
 python main.py emails --limit 2     # test-draft 2 emails (printed, not saved)
 python main.py emails               # draft top 10 -> data/email_drafts.json
+python main.py emails --rebuild     # re-apply changed email copy, no API calls
 python main.py export               # -> data/leads.csv
 python main.py docs                 # README images + sample CSV, from cache
 ```
@@ -182,11 +184,33 @@ niche (roofers, HVAC, solar, pest control...):
 5. Run the stages with `--limit` first to check the results before spending
    the full quota.
 
+## Email drafts
+
+Each draft follows the same structure, matching the
+`utahwaterguide.com/partners` page:
+
+- **Subject:** "A free partnership idea for {company}"
+- **Greeting:** "Hi Spencer," when the contact email is clearly a first
+  name, otherwise "Hi {company} team,"
+- **Intro:** what utahwaterguide.com is, plus one personalization sentence
+  from the company's real data (map-pack cities, reviews, ad signals, or
+  location)
+- **Partnership:** sending homeowners who want help to one local company
+- **Free start:** the first 5 homeowner inquiries are free, with no contract
+- **Closing:** apply at utahwaterguide.com/partners, or reply "yes"
+- **Signature and footer:** sender, mailing address and an opt-out line
+
+Everything except the personalization sentence is fixed text in
+`src/emails.py` (mailing address and signature in `config.py`). Change the
+copy there, then run `python main.py emails --rebuild` to update saved
+drafts without any API calls. Drafts also get a `send_wave` (top 3 by score,
+next 3, then the rest) and an `email_city_conflict` flag when two targets
+share a city, since the partnership offers one company per area.
+
 ## Notes
 
-- Email drafts contain `[OFFER]` and `[MAILING ADDRESS]` placeholders to fill
-  in by hand, plus an opt-out line. Review every draft before sending it
-  yourself; this tool never sends anything.
+- Review every draft before sending it yourself; this tool never sends
+  anything.
 - Website scans identify themselves with a descriptive user agent, pause
   between requests, and hit each site at most once (cached).
 

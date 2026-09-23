@@ -15,7 +15,7 @@ COLUMNS = [
     "rank", "score", "score_reason", "name", "location", "contact_email", "phone", "website",
     "rating", "review_count", "map_pack_cities", "organic_top10_cities",
     "google_ads_tag", "meta_pixel", "financing_offer", "free_water_test_offer",
-    "flag", "email_subject", "email_body", "email_city_conflict",
+    "flag", "send_wave", "email_subject", "email_body", "email_city_conflict",
 ]
 
 
@@ -59,6 +59,7 @@ def export_csv() -> dict:
                 "" if scan["error"] else ("yes" if scan.get("free_water_test_offer") else "no")
             ),
             "flag": c.get("flag") or "",
+            "send_wave": draft.get("send_wave", ""),
             "email_subject": draft.get("subject", ""),
             "email_body": draft.get("body", ""),
             "email_city_conflict": draft.get("city_conflict") or "",

@@ -93,6 +93,8 @@ TOP_N_FOR_EMAILS = 10
 SENDER_NAME = "Shennan"
 SENDER_TITLE = "founder of Utah Water Guide"
 EMAIL_SIGNATURE = "Shennan\nUtah Water Guide\nutahwaterguide.com"
+MAILING_ADDRESS = "Utah Water Guide\nPO Box 50684\nProvo, UT 84605"
+PARTNERS_URL = "utahwaterguide.com/partners"
 RESOURCE_DESCRIPTION = (
     "utahwaterguide.com is an independent, unbiased water-hardness data "
     "resource covering Utah County and Salt Lake County -- not a contractor "

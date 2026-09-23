@@ -12,7 +12,7 @@ Usage:
     python main.py contacts             # find public contact emails (cached, free)
     python main.py emails --limit 2     # test-draft 2 emails (not saved; never sent)
     python main.py emails               # draft top 10, save data/email_drafts.json
-    python main.py emails --rebuild     # re-apply subject/offer/signature, no API calls
+    python main.py emails --rebuild     # re-apply the fixed email copy, no API calls
     python main.py export               # write data/leads.csv
     python main.py docs                 # README SVGs + sample CSV, from cache only
 """
@@ -102,14 +102,15 @@ def run_emails(limit, rebuild):
     result = emails.rebuild_drafts() if rebuild else emails.draft_emails(limit=limit)
     for d in result["drafts"]:
         issues = f"  ** {'; '.join(d['problems'])} **" if d["problems"] else ""
-        print(f"\n=== {d['name']} (score {d['score']}, {d['word_count']} words){issues}")
+        print(f"\n=== {d['name']} (score {d['score']}, wave {d['send_wave']}, "
+              f"{d['word_count']} words){issues}")
         print(f"To: {d['contact_email'] or '(no email found)'}")
         print(f"Fact: {d['fact_used']}")
         print(f"Subject: {d['subject']}\n")
         print(d["body"])
     conflicts = [d for d in result["drafts"] if d["city_conflict"]]
     if conflicts:
-        print("\nCity conflicts (one exclusive spot per city):")
+        print("\nCity conflicts (one partner company per area):")
         for d in conflicts:
             print(f"  {d['name']}: {d['city_conflict']}")
     # A partial (test) run doesn't overwrite a full drafts file.
@@ -165,7 +166,7 @@ def main():
     parser.add_argument(
         "--rebuild",
         action="store_true",
-        help="emails: re-apply subject/offer/signature to saved drafts, no API calls",
+        help="emails: re-apply the fixed email copy to saved drafts, no API calls",
     )
     args = parser.parse_args()
 

@@ -2,17 +2,20 @@
 
 DRAFTS ONLY -- this module never sends anything; it has no mail code at all.
 
-Picks the top TOP_N_FOR_EMAILS scored companies (skipping competitor flags)
-and gives Claude Haiku one verified fact about each -- chosen in code, with
-only the top AD_FACT_TOP_N allowed to lead with "already runs ads" -- to
-work into two short sentences. Everything else -- the subject line
-("Exclusive {city} spot..."), greeting ("Hi Spencer," when the contact
-address is a first name), offer, closing, signature and footer -- is added
-in code so it's always exact, and can be changed later with `--rebuild`
-without re-calling Claude. Code checks each draft for the site URL, the word
-limit, flattery and usage/traffic claims (one retry), and flags drafts that
-share a city, since the offer is one exclusive spot per city.
-Contact emails come from contacts.py (free homepage + contact-page scan).
+Picks the top TOP_N_FOR_EMAILS scored companies (skipping competitor flags).
+The email copy matches the utahwaterguide.com/partners page and is fixed
+text assembled in code: subject, greeting ("Hi Spencer," when the contact
+address is a first name), intro, partnership and free-start paragraphs,
+closing, signature and footer. Claude Haiku writes exactly one sentence --
+the personalization -- from one verified fact chosen in code (only the top
+AD_FACT_TOP_N may use the ad signal, which always gets the fixed wording
+AD_PERSONALIZATION instead). Code checks that sentence for flattery,
+usage/traffic claims and length (one retry).
+
+Each draft stores its personalization sentence, so `emails --rebuild`
+re-applies changed copy to saved drafts with no API calls. Drafts get a
+send_wave (by score) and a city_conflict flag, since the partnership is one
+local company per area. Contact emails come from contacts.py.
 """
 
 import json
@@ -28,17 +31,53 @@ from src import contacts, discover
 IN_PATH = config.DATA_DIR / "scored_companies.json"
 OUT_PATH = config.DATA_DIR / "email_drafts.json"
 
-MAX_WORDS = 120  # greeting through signature; the footer isn't counted
-MAX_BODY_WORDS = 55  # the model's two sentences, leaving room for the fixed offer
-OFFER = (
-    "I'm offering one water treatment company per city an exclusive spot. "
-    "The first 3 homeowner leads from your area are free, with no contract "
-    "after that. You'd only pay for leads you actually get."
+# --- Fixed copy (matches the partners page) ---------------------------------
+SUBJECT = "A free partnership idea for {company}"
+INTRO = (
+    "I'm building utahwaterguide.com, an independent resource that helps Utah "
+    "County and Salt Lake County homeowners look up how hard their water is."
 )
-CLOSING = "Open to a quick chat?"
+PARTNERSHIP = (
+    "When homeowners on the site want help with their water, I'd like to send "
+    "them to one trusted local company, and I think you'd be a great fit."
+)
+FREE_START = (
+    "It's free to start. Your first 5 homeowner inquiries are free, with no "
+    "contract, so you can see the quality for yourself before deciding anything."
+)
+CLOSING = (
+    f"If you're interested, you can see the details and apply at "
+    f"{config.PARTNERS_URL}, or just reply 'yes' and I'll send them over."
+)
 SIGNATURE = config.EMAIL_SIGNATURE
-SUBJECT = "Exclusive {city} spot on Utah Water Guide"
+FOOTER = f"{config.MAILING_ADDRESS}\nNot interested? Just reply and I won't reach out again."
+
+# --- Send waves: top 3 by score, next 3, then the rest -----------------------
+WAVE_SIZES = (3, 3)
+
+# --- The model-written personalization sentence ------------------------------
+MAX_PERSONAL_WORDS = 30
 MIN_REVIEWS_FOR_FACT = 10  # "2 Google reviews" isn't a detail worth leading with
+# Only this many top targets lead with the ad signal; the rest use their
+# next-best fact so the batch doesn't all open the same way.
+AD_FACT_TOP_N = 2
+AD_FACT_PREFIX = "Already "
+# Ad-signal facts get this fixed wording rather than naming the ad platforms.
+AD_PERSONALIZATION = "I noticed you're already investing in online marketing."
+# Backstops for the prompt's rules. They apply to the model's sentence only;
+# the fixed copy above is written by hand.
+FLATTERY = re.compile(
+    r"\b(trust(ed)?|excellent|strong|impressive|clearly|tells me|great|solid|"
+    r"reputation)\b",
+    re.I,
+)
+USAGE_CLAIM = re.compile(
+    r"homeowners (already |often |regularly )?(use|visit|come|land|find|rely|search)"
+    r"|on the site|(our|my|the site's) (visitors|users|traffic|readers|audience)"
+    r"|\b(visitors|traffic)\b",
+    re.I,
+)
+
 # Local parts that are a role, not a person, so they don't become "Hi Info,".
 ROLE_MAILBOXES = {
     "info", "contact", "contactus", "service", "services", "sales", "office",
@@ -47,58 +86,27 @@ ROLE_MAILBOXES = {
 FREE_MAIL_DOMAINS = {
     "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com", "icloud.com", "msn.com",
 }
-# Backstop for the no-flattery rule.
-FLATTERY = re.compile(
-    r"\b(trust(ed)?|excellent|strong|impressive|clearly|tells me|great|solid|"
-    r"reputation)\b",
-    re.I,
-)
-FOOTER = "[MAILING ADDRESS]\nNot interested? Just reply and I won't reach out again."
-# Only this many top targets lead with the ad signal; the rest use their
-# next-best fact so the batch doesn't all open the same way.
-AD_FACT_TOP_N = 2
-AD_FACT_PREFIX = "Already "
-# Backstop for the no-usage-claims rule (the prompt is the main control).
-USAGE_CLAIM = re.compile(
-    r"homeowners (already |often |regularly )?(use|visit|come|land|find|rely|search)"
-    r"|on the site|(our|my|the site's) (visitors|users|traffic|readers|audience)"
-    r"|\b(visitors|traffic)\b",
-    re.I,
-)
 
 SYSTEM_PROMPT = f"""\
-You write short cold outreach emails from {config.SENDER_NAME}, \
-{config.SENDER_TITLE}, to local water softener / treatment companies.
+You write one sentence for a cold outreach email from {config.SENDER_NAME}, \
+{config.SENDER_TITLE}, to a local water softener / treatment company. The \
+rest of the email is already written; your sentence follows an intro about \
+utahwaterguide.com.
 
-About the sender: {config.RESOURCE_DESCRIPTION} {config.SENDER_NAME} is \
-BUILDING it -- a resource for homeowners to look up how hard their water is. \
-The goal is to start a conversation about eventually connecting the company \
-with homeowners in its area who are researching water softeners.
-
-Write exactly two short sentences, in first person singular as \
-{config.SENDER_NAME} ("I", not "we"):
-1. What you're building (see below).
-2. The one provided fact about the company, stated plainly as something you \
-noticed. Don't interpret it or compliment them -- no "which tells me", \
-"trusted", "strong", "excellent", "clearly", "impressive".
-- Friendly, plain, local. No hype, no exclamation marks, no buzzwords.
-- Include the exact text "utahwaterguide.com" and describe it as an \
-independent water-hardness resource covering Utah County and Salt Lake County \
-that you're building ("I'm building...").
-- Never invent anything. Make NO claims about the site's traffic, searches, \
-visitors, users, trust, or results, and don't imply anyone uses it today \
-(no "homeowners use it", "land on the site", "researching on the site"). \
-Talk about what it's for, not who uses it. The only facts are the one about \
-the company and the description above.
-- No greeting -- it's added separately.
-- Don't describe an offer, a partnership, or connecting/exploring/working \
-together, and don't ask to chat -- an offer line, closing question and \
-signature are added separately.
-- The two sentences together must be under {MAX_BODY_WORDS} words."""
+Write exactly ONE short sentence, in first person singular ("I"), stating \
+the provided fact about the company plainly as something you noticed, e.g. \
+"I noticed you show up in Google's map pack for water softener searches in \
+Alpine."
+- Don't interpret the fact or compliment them -- no "which tells me", \
+"trusted", "strong", "excellent", "clearly", "impressive", "great".
+- Never invent anything beyond the fact. Make no claims about the website's \
+traffic, visitors or users.
+- No greeting, offer, question or sign-off.
+- Under {MAX_PERSONAL_WORDS} words."""
 
 
-class EmailDraft(BaseModel):
-    body: str
+class Personalization(BaseModel):
+    sentence: str
 
 
 def _facts(c: dict) -> list[str]:
@@ -142,6 +150,10 @@ def _word_count(text: str) -> int:
     return len(text.split())
 
 
+def _short_name(company: dict) -> str:
+    return re.sub(r",?\s+(inc\.?|llc|co\.?)$", "", company["name"], flags=re.I)
+
+
 def _greeting(company: dict, email: Optional[str]) -> str:
     """'Hi Spencer,' when the contact address is a person's first name,
     else 'Hi <Company> team,'."""
@@ -155,53 +167,63 @@ def _greeting(company: dict, email: Optional[str]) -> str:
     )
     if looks_like_name:
         return f"Hi {local.capitalize()},"
-    name = re.sub(r",?\s+(inc\.?|llc|co\.?)$", "", company["name"], flags=re.I)
-    return f"Hi {name} team,"
+    return f"Hi {_short_name(company)} team,"
 
 
-def _problems(full: str) -> list[str]:
+def _problems(sentence: str) -> list[str]:
+    """Checks on the model-written sentence only."""
     problems = []
-    flattery = FLATTERY.search(full)
+    flattery = FLATTERY.search(sentence)
     if flattery:
         problems.append(f'remove "{flattery.group(0)}" -- state the fact without compliments')
-    claim = USAGE_CLAIM.search(full)
+    claim = USAGE_CLAIM.search(sentence)
     if claim:
-        problems.append(
-            f'remove "{claim.group(0)}" -- make no claims about who uses the site '
-            "or its traffic; say you're building it"
-        )
-    if "utahwaterguide.com" not in full.lower():
-        problems.append('it must include the exact text "utahwaterguide.com"')
-    words = _word_count(full)
-    if words >= MAX_WORDS:
-        problems.append(f"the full email was {words} words; make your two sentences shorter")
+        problems.append(f'remove "{claim.group(0)}" -- make no claims about the site\'s users')
+    words = _word_count(sentence)
+    if words >= MAX_PERSONAL_WORDS:
+        problems.append(f"it was {words} words; keep it under {MAX_PERSONAL_WORDS}")
     return problems
 
 
 def _city(company: dict) -> str:
-    """The city the exclusive offer is for: the address city, or for a
-    service-area business the city whose search surfaced it."""
+    """The company's area: the address city, or for a service-area business
+    the city whose search surfaced it."""
     return company["search_city"] if company.get("service_area") else company.get("city")
 
 
-def _assemble(company: dict, email: Optional[str], middle: str) -> dict:
-    """Wrap the model-written sentences in the code-built parts."""
-    full = (
-        f"{_greeting(company, email)}\n\n{middle.strip()}\n\n{OFFER}\n\n"
-        f"{CLOSING}\n\n{SIGNATURE}"
-    )
+def _assemble(company: dict, email: Optional[str], personalization: str) -> dict:
+    """Build the full email around the model-written sentence."""
+    personalization = personalization.strip()
+    body = "\n\n".join([
+        _greeting(company, email),
+        f"{INTRO} {personalization}",
+        PARTNERSHIP,
+        FREE_START,
+        CLOSING,
+        SIGNATURE,
+        FOOTER,
+    ])
     return {
-        "subject": SUBJECT.format(city=_city(company)),
+        "subject": SUBJECT.format(company=_short_name(company)),
         "city": _city(company),
-        "middle": middle.strip(),
-        "body": f"{full}\n\n{FOOTER}",
-        "word_count": _word_count(full),
-        "_full": full,
+        "personalization": personalization,
+        "body": body,
+        # Greeting through signature; the footer isn't counted.
+        "word_count": _word_count(body.rsplit("\n\n", 1)[0]),
     }
 
 
-def _mark_city_conflicts(drafts: list[dict]) -> None:
-    """Exclusivity means one company per city, so flag drafts sharing one."""
+def _mark_waves_and_conflicts(drafts: list[dict]) -> None:
+    """send_wave by score order (drafts are already ranked), and a flag for
+    drafts sharing a city, since the partnership is one company per area."""
+    for rank, d in enumerate(drafts):
+        wave, start = 1, 0
+        for size in WAVE_SIZES:
+            if rank < start + size:
+                break
+            start += size
+            wave += 1
+        d["send_wave"] = wave
     by_city: dict[str, list[str]] = {}
     for d in drafts:
         by_city.setdefault(d["city"], []).append(d["name"])
@@ -221,25 +243,36 @@ def _draft_one(
     if not allow_ad_fact:
         facts = [f for f in facts if not f.startswith(AD_FACT_PREFIX)]
     fact = facts[0] if facts else None
-    prompt = f"Company: {company['name']}\nFact to use: {fact or 'none -- keep it general'}"
+    if fact and fact.startswith(AD_FACT_PREFIX):
+        return {**_assemble(company, email, AD_PERSONALIZATION), "fact_used": fact, "problems": []}
+    prompt = f"Company: {company['name']}\nFact: {fact or 'none -- mention their local area'}"
     messages = [{"role": "user", "content": prompt}]
     for attempt in range(2):
         response = client.messages.parse(
             model=config.CLAUDE_MODEL,
-            max_tokens=512,
+            max_tokens=256,
             system=SYSTEM_PROMPT,
             messages=messages,
-            output_format=EmailDraft,
+            output_format=Personalization,
         )
-        assembled = _assemble(company, email, response.parsed_output.body)
-        problems = _problems(assembled.pop("_full"))
+        sentence = response.parsed_output.sentence
+        problems = _problems(sentence)
         if not problems:
             break
         messages = [{
             "role": "user",
-            "content": prompt + "\n\nRewrite your last draft: " + "; ".join(problems) + ".",
+            "content": prompt + "\n\nRewrite your last sentence: " + "; ".join(problems) + ".",
         }]
-    return {**assembled, "fact_used": fact, "problems": problems}
+    return {**_assemble(company, email, sentence), "fact_used": fact, "problems": problems}
+
+
+def _targets() -> list[dict]:
+    companies = json.loads(IN_PATH.read_text())
+    eligible = [
+        c for c in companies if c.get("score") is not None and not discover.skips_email(c)
+    ]
+    eligible.sort(key=lambda c: (c["score"], c.get("review_count") or 0), reverse=True)
+    return eligible[: config.TOP_N_FOR_EMAILS]
 
 
 def draft_emails(limit: Optional[int] = None) -> dict:
@@ -249,15 +282,9 @@ def draft_emails(limit: Optional[int] = None) -> dict:
         raise RuntimeError("ANTHROPIC_API_KEY is not set in .env")
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
-    companies = json.loads(IN_PATH.read_text())
-    eligible = [
-        c for c in companies if c.get("score") is not None and not discover.skips_email(c)
-    ]
-    eligible.sort(key=lambda c: (c["score"], c.get("review_count") or 0), reverse=True)
-    targets = eligible[: config.TOP_N_FOR_EMAILS]
+    targets = _targets()
     if limit is not None:
         targets = targets[:limit]
-
     contact_cache = contacts.find_contacts(targets)
 
     drafts = []
@@ -281,21 +308,35 @@ def draft_emails(limit: Optional[int] = None) -> dict:
             "website": company.get("website"),
             **draft,
         })
-    _mark_city_conflicts(drafts)
+    _mark_waves_and_conflicts(drafts)
     return {"drafts": drafts, "out_path": OUT_PATH}
 
 
+def _legacy_personalization(draft: dict) -> str:
+    """For drafts saved before only the personalization was stored: take the
+    model-written paragraph and drop its own "I'm building..." sentence,
+    which the fixed INTRO now replaces."""
+    middle = draft.get("middle") or draft["body"].split("\n\n")[1]
+    sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", middle.strip())
+    if len(sentences) > 1 and sentences[0].startswith("I'm building"):
+        sentences = sentences[1:]
+    return " ".join(sentences)
+
+
 def rebuild_drafts() -> dict:
-    """Re-apply the code-built parts (subject, greeting, offer, closing,
-    signature, footer) to the saved drafts, keeping each draft's
-    model-written sentences. No API calls."""
+    """Re-apply the fixed copy to the saved drafts, keeping each draft's
+    personalization sentence. No API calls."""
     drafts = json.loads(OUT_PATH.read_text())
     companies = {c["place_id"]: c for c in json.loads(IN_PATH.read_text())}
+    order = {c["place_id"]: i for i, c in enumerate(_targets())}
+    drafts.sort(key=lambda d: order.get(d["place_id"], len(order)))
     for d in drafts:
-        # Drafts saved before "middle" was stored: it's the 2nd paragraph.
-        middle = d.get("middle") or d["body"].split("\n\n")[1]
-        assembled = _assemble(companies[d["place_id"]], d["contact_email"], middle)
-        d["problems"] = _problems(assembled.pop("_full"))
-        d.update(assembled)
-    _mark_city_conflicts(drafts)
+        if (d.get("fact_used") or "").startswith(AD_FACT_PREFIX):
+            personalization = AD_PERSONALIZATION
+        else:
+            personalization = d.get("personalization") or _legacy_personalization(d)
+        d.pop("middle", None)
+        d.update(_assemble(companies[d["place_id"]], d["contact_email"], personalization))
+        d["problems"] = _problems(personalization)
+    _mark_waves_and_conflicts(drafts)
     return {"drafts": drafts, "out_path": OUT_PATH}
